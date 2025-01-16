@@ -94,12 +94,15 @@ if (var == 1) then
 !==  READ FLOS VELOCITY FIELD ==
   OPEN(IO,FILE = 'VelocityField.txt')
   !OPEN(IO,FILE = 'v.txt')
-  READ(IO,*) ((VFlos(I,J,1),VFlos(I,J,2),I=1,NI),J=1,NJ)
+  VFlos=0
+  READ(IO,*) ((VFlos(I,J,1),VFlos(I,J,2),I=0,NI),J=0,NJ)
   CLOSE(IO)
 
 !==  READ FLOS TEMPERATURE FIELD ==
   OPEN(IO,FILE = 'Temperature.txt')
-  READ(IO,*) ((TFlos(I,J),I=1,NI),J=1,NJ)
+  !TFlos=0
+!  READ(IO,*) ((TFlos(I,J),I=1,NI-1),J=1,NJ-1)
+  READ(IO,*) ((TFlos(I,J),I=0,NI),J=0,NJ)
   CLOSE(IO)
 end if
 !=============== Задача о каверне ===============
@@ -132,11 +135,12 @@ ENDDO
 
 !=============== CALCULATE DIF OPERATORS ===============
 
-gradP=0
+
+
 
 !=== CALCULATE GRADIENT ===
   WRITE(*,*) 'CALCULATE GRADIENT'
-  Call B_CalcGradient(NI, NJ, X, Y, GradP,CellCenter,CellVolume,IFaceCenter,IFaceVector,JFaceCenter,JFaceVector, p, IGrad)
+  Call B_CalcGradient(NI, NJ, X, Y, GradP,CellCenter,CellVolume,IFaceCenter,IFaceVector,JFaceCenter,JFaceVector, P, IGrad)
   GradP_Error = ABS((GradP_Exact-GradP)/GradP_Exact)
   write(*,*) maxval(GradP_Error(1:NI-1,1:NJ-1,:))
 
@@ -174,7 +178,7 @@ WRITE(*,*) 'CALCULATE ROTOR'
   
   OPEN(IO,FILE = 'ResT.plt')
   write(IO,*) 'Variables = "iterations", "Res T"'
-  !GradT = 0
+  GradT = 0
 !$ time1 = OMP_GET_WTIME()
 !$OMP parallel
   do iter = 1,niter
@@ -183,8 +187,10 @@ WRITE(*,*) 'CALCULATE ROTOR'
     Call B_CalcResidualT(NI,NJ,X,Y,CellCenter,CellVolume,IFaceCenter,IFaceVector,JFaceCenter,JFaceVector,&
   Rei,Pr,VFlos,T,GradT,ResT,scheme,CFL,VNM,Koef_Temp,dtau) !вычисление невязки температуры
 !$OMP single
-    write(*,*) iter, maxval(abs(ResT(1:NI-1,1:NJ-1)))
-    write(IO,*) iter, maxval(abs(ResT(1:NI-1,1:NJ-1)))
+    !write(*,*) iter, maxval(abs(ResT(1:NI-1,1:NJ-1)))
+    !write(IO,*) iter, maxval(abs(ResT(1:NI-1,1:NJ-1)))
+	
+	!write(*,*) iter, maxval(abs(dtau(1:NI-1,1:NJ-1)))
 !$OMP end single
 !$OMP DO private(i,j)
 !Метод установления. Явная схема Эйлера
@@ -205,6 +211,7 @@ if (var == 1) then
 end if
 write(*,*) 'TEMPERATURE error', maxval(T_Error(1:NI-1,1:NJ-1))
 !=============== CALCULATE RESIDUAL T ===============
+
 
 
 
@@ -308,15 +315,13 @@ END SUBROUTINE
 
 !=============== FUNCTIONS ===============
 Function Pressure(X,Y) !Скалярная функция давления
-  !Pres = (x+y)**2
-  Pres = x**3+y**3
-  !Pres = (x+y)**3
+  Pressure = x**2+y**2+x**1+y**1
 End Function
 
 Subroutine VELOCITY(x,y,V) !Вектор скорости
 Real V(2)
-  V(1) = y**2
-  V(2) = -x**1
+  V(1) = 1
+  V(2) = 1
 End  Subroutine
 
 Function rLinearInterp(d1,d2,p1,p2) !линейная интерполяция
@@ -335,12 +340,12 @@ Real GP_E(2)
 End  Subroutine
 
 Function DivVelocityExact(X,Y) !Аналитическое значение дивергенции
-	DivVelocityExact = 2
+	DivVelocityExact = 2*(x+y+1)
 	!DivVelocityExact = 4*x**3+2*x*y**2+2*y*x**2+4*y**3
 End Function
 
 Function RLapPExact(X,Y) !Аналитическое значение лапласиана
-RLapPExact = 4
+RLapPExact = 4.0+6*(x+y)
 End Function
 
 real function RotVelocityExact(X,Y) !Аналитическое значение ротора
@@ -355,7 +360,7 @@ Subroutine B_CalcGradient(NI, NJ, X, Y, GradP,CellCenter,CellVolume,IFaceCenter,
 
  real,dimension(0:NI,0:NJ,2):: GradP, GradP_tmp, GradP_Exact, GradP_Error
  real,dimension(0:NI,0:NJ):: p
- INTEGER :: NeighCell(4,2), GGI, IGrad, i,j , inc, jnc,iface
+ INTEGER :: NeighCell(4,2), Green_Gauss_iter, IGrad, i,j , in, jn,iface
  REAL SF(4,2), rF(4,2), Pf(4)
  REAL CellCenter(0:NI,0:NJ,2),CellVolume(NI-1,NJ-1),&   ! центры и объемы ячеек
        IFaceCenter( NI,NJ-1,2),IFaceVector( NI,NJ-1,2),& !центры и нормали граней для I-граней
@@ -374,25 +379,25 @@ Subroutine B_CalcGradient(NI, NJ, X, Y, GradP,CellCenter,CellVolume,IFaceCenter,
      DO I=1, NI-1
      DO J=1, NJ-1
 
-SF(1,:)=-IFaceVector(I,J,:) 
+SF(1,:)=-IFaceVector(I,J,:) ! Подготавливаем вектор грани с учетом внешней нормали
 SF(2,:)=IFaceVector(I+1,J,:)
 SF(3,:)=-JFaceVector(I,J,:)
 SF(4,:)=JFaceVector(I,J+1,:)
 
-rF(1,:)=IFaceCenter(I,J,:) 
+rF(1,:)=IFaceCenter(I,J,:) ! координаты  центров граней
 rF(2,:)=IFaceCenter(I+1,J,:)
 rF(3,:)=JFaceCenter(I,J,:)
 rF(4,:)=JFaceCenter(I,J+1,:)
 
 
-NeighCell(1,:)=[i-1,j]
+NeighCell(1,:)=[i-1,j]!подготавливаем массив соседних ячеек
 NeighCell(2,:)=[I+1,j]
 NeighCell(3,:)=[i,j-1]
 NeighCell(4,:)=[i,j+1]
 
-GradP(I,J,:)=0
+GradP(I,J,:)=0 !инициализация
 
-	DO IFACE=1,4 
+	DO IFACE=1,4  !цикл по всем граням
 	IN=NeighCell(iface,1)
 	JN=NeighCell(iface,2)
 
@@ -406,7 +411,7 @@ p_dum=Pressure(2*rf(iface,1)-CellCenter(i,j,1),2*rf(iface,2)-CellCenter(i,j,2))
 Pf(iface)=0.5*(p_dum+P(i,j))
 end if
 
-GradP(I,J,:)=GradP(I,J,:)+Pf(iface)*SF(iface,:)
+GradP(I,J,:)=GradP(I,J,:)+Pf(iface)*SF(iface,:) !обновили градиент
 enddo
 
 GradP(I,J,:)=GradP(I,J,:)/CellVolume(I,J)
@@ -415,63 +420,62 @@ END DO
 END DO
 !$OMP END DO
 
-!метод Грина-Гуасса с итерациями
-IF (IGrad==2) then
+case(2)  !метод Грина-Гуассса с итерациями
 
-    GGI=5 !итерации самого метода
-    do k=1, GGI
+    Green_Gauss_iter = 6 !итерации самого метода
+    do k=1, Green_Gauss_iter
+		GradP_tmp = 0
 !$OMP DO private(i,j,Sf,rf,NeighCell,iface,IN,JN,d,dn,PE,rE,GPE,Pf)
-    DO I=1, NI-1
-    DO J=1, NJ-1
+		DO I=1, NI-1
+			DO J=1, NJ-1
+				SF(1,:)=-IFaceVector(I,J,:) ! Подготавливаем вектор грани с учетом внешней нормали
+				SF(2,:)=IFaceVector(I+1,J,:)
+				SF(3,:)=-JFaceVector(I,J,:)
+				SF(4,:)=JFaceVector(I,J+1,:)
 
-        GradP_tmp(i,j,:)=0
+				rF(1,:)=IFaceCenter(I,J,:) ! координаты  центров граней
+				rF(2,:)=IFaceCenter(I+1,J,:)
+				rF(3,:)=JFaceCenter(I,J,:)
+				rF(4,:)=JFaceCenter(I,J+1,:)
 
-SF(1,:)=-IFaceVector(I,J,:) 
-SF(2,:)=IFaceVector(I+1,J,:)
-SF(3,:)=-JFaceVector(I,J,:)
-SF(4,:)=JFaceVector(I,J+1,:)
+	
+				NeighCell(1,:)=[i-1,j]!подготавливаем массив соседних ячеек
+				NeighCell(2,:)=[I+1,j]
+				NeighCell(3,:)=[i,j-1]
+				NeighCell(4,:)=[i,j+1]
 
-rF(1,:)=IFaceCenter(I,J,:) 
-rF(2,:)=IFaceCenter(I+1,J,:)
-rF(3,:)=JFaceCenter(I,J,:)
-rF(4,:)=JFaceCenter(I,J+1,:)
+				DO IFACE=1,4 !цикл по всем граням
+					IN=NeighCell(iface,1)
+					JN=NeighCell(iface,2)
 
+					d=Norm2(rF(iface,:)-CellCenter(I,j,:)) !расстояние от центра ячейки до центра грани
+					dn=Norm2(rF(iface,:)-CellCenter(IN,JN,:)) !расстояние до центра соседней ячейки
 
-NeighCell(1,:)=[i-1,j]
-NeighCell(2,:)=[I+1,j]
-NeighCell(3,:)=[i,j-1]
-NeighCell(4,:)=[i,j+1]
+					Pe(iface)=rLinearInterp(d,dn,P(I,J),P(IN,JN)) ! Давление в точке E, полученное линейной интерполяцией
+					!PE = RLinearInterp(d,dn,P(i,j),P(IN,JN))
 
-    DO IFACE=1,4
-	IN=NeighCell(iface,1)
-	JN=NeighCell(iface,2)
+					rE(1)=rLinearInterp(d,dn,CellCenter(I,J,1),CellCenter(IN,JN,1))! Координаты точки E (точка пересечения центров ячеек) в случае скошенных ячеек
+					rE(2)=rLinearInterp(d,dn,CellCenter(I,J,2),CellCenter(IN,JN,2))
 
-	d=Norm2(rF(iface,:)-CellCenter(I,j,:)) !расстояние от центра ячейки до центра грани
-	dn=Norm2(rF(iface,:)-CellCenter(IN,JN,:)) !расстояние до центра соседней ячейки
+					GPE(1)=rLinearInterp(d,dn,GradP(I,J,1),GradP(IN,JN,1))! Градиент в точке E (Уточнение значения с помощью градиента для скошенных ячеек)
+					GPE(2)=rLinearInterp(d,dn,GradP(I,J,2),GradP(IN,JN,2))
 
-    Pe(iface)=rLinearInterp(d,dn,P(I,J),P(IN,JN))
+					Pf(iface)=Pe(iface)+DOT_PRODUCT(GPE(:),rF(iface,:)-rE(:)) ! Давление на грани с поправкой для скошенных ячеек
+					if (dn<1e-7) then !значение в центре заграничной ячейки
+						p_dum=Pressure(2*rf(iface,1)-CellCenter(i,j,1),2*rf(iface,2)-CellCenter(i,j,2))
+						Pf(iface)=0.5*(p_dum+P(i,j))
+					end if
+					GradP_tmp(I,J,:)=GradP_tmp(I,J,:)+Pf(iface)*SF(iface,:) ! обонвляем градиент
+				ENDDO
 
-	rE(1)=rLinearInterp(d,dn,CellCenter(I,J,1),CellCenter(IN,JN,1))
-	rE(2)=rLinearInterp(d,dn,CellCenter(I,J,2),CellCenter(IN,JN,2))
+				GradP_tmp(I,J,:)=GradP_tmp(I,J,:)/CellVolume(I,J)
 
-	GPE(1)=rLinearInterp(d,dn,GradP(I,J,1),GradP(IN,JN,1))
-	GPE(2)=rLinearInterp(d,dn,GradP(I,J,2),GradP(IN,JN,2))
+				GradP(I,J,:)=GradP_tmp(I,J,:)
 
-    Pf(iface)=Pe(iface)+DOT_PRODUCT(GPE(:),rF(iface,:)-rE(:)) ! с поправкой для скошенных ячеек
-
-	GradP_tmp(I,J,:)=GradP_tmp(I,J,:)+Pf(iface)*SF(iface,:)
-	ENDDO
-
-GradP_tmp(I,J,:)=GradP_tmp(I,J,:)/CellVolume(I,J)
-
-GradP(I,J,:)=GradP_tmp(I,J,:)
-
-    END DO
-    END DO
+			END DO
+		END DO
 !$OMP END DO
-
-enddo
-endif
+	enddo
 
 end select
 End Subroutine
@@ -621,7 +625,7 @@ NeighCell(4,:)=[i,j+1]
     if (dn.le.1e-7) then !для приграничных ячеек
 
 	   dpdn_c=DOT_PRODUCT(GradP(i,j,:),NF(:))
-	   !dpdn=dpdn+(dpdn-dpdn_c)   !первый порядок
+	  ! dpdn=dpdn+(dpdn-dpdn_c)   !первый порядок
 	   dpdn=5./3.*dpdn-2./3.*dpdn_c   !второй порядок
        GPE(:)=GradP(i,j,:)	   !на границе берем значение из центра ячейки
 	endif
@@ -759,12 +763,10 @@ DO j=1, NJ-1
 					else
 						Tf = T(in,jn) + dot_product(GradT(in,jn,:),rf(iface,:) - CellCenter(in,jn,:))
 						if (dn < 1e-7) then !для приграничных ячеек
-							Tf = 2*T(in,jn) - T(i,j) -&
-							4*T(in,jn) + 4*T(i,j) +&
-							3*dot_product(GradT(i,j,:),rf(iface,:)-CellCenter(i,j,:))
+							Tf = 2.0*T(in,jn) - T(i,j) - 4.0*T(in,jn) + 4.0*T(i,j) + 3.0*dot_product(GradT(i,j,:),rf(iface,:)-CellCenter(i,j,:))
 						end if
 					end if
-					Tf = 0.05*(Tf + RLinearInterp(d,dn,T(i,j),T(in,jn)))
+					Tf = 0.5*(Tf + RLinearInterp(d,dn,T(i,j),T(in,jn)))
               end select
 			  
               VTf(:) = Vf(:)*Tf !итоговое ковективное слагаемое
@@ -793,8 +795,7 @@ DO j=1, NJ-1
 
               if ((IN == 0) .or. (IN == NI)) then  !ГУ - адиабатические левая и правая стенки
                 dTdn = 0.0
-                T(IN,JN) = T(i,j) + DNC*3./5.*(2./3.*dot_product(GradT(i,j,:),Nf(:)) -&
-                dot_product(GradT(i,j,:),Nf(:) - RNC(:)))
+                T(IN,JN) = T(i,j) - dot_product(GradT(i,j,:),Nf(:) - RNC(:)) + DNC*3./5.*(2./3.*dot_product(GradT(i,j,:),Nf(:))) 
               end if
 
               ResT(i,j) = ResT(i,j) + dot_product(VTf(:),Sf(iface,:)) - dTdn*norm2(Sf(iface,:))*Koef_Temp !невязка на м3
